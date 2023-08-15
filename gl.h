@@ -3,9 +3,8 @@
 
 #ifdef HAVE_GLES
 
-int  gl_init(void *display, void *window, int *quirks, int w, int h);
-void gl_announce(void);
-int  gl_flip(const void *fb, int w, int h);
+int gl_init(void *display, void *window, int *quirks);
+int gl_flip(const void *fb, int w, int h);
 void gl_finish(void);
 
 /* for external flips */
@@ -14,12 +13,9 @@ extern void *gl_es_surface;
 
 #else
 
-static __inline int gl_init(void *display, void *window, int *quirks, int w, int h)
+static __inline int gl_init(void *display, void *window, int *quirks)
 {
   return -1;
-}
-static __inline void gl_announce(void)
-{
 }
 static __inline int gl_flip(const void *fb, int w, int h)
 {

@@ -75,7 +75,7 @@ int plat_get_skin_dir(char *dst, int len)
 {
 	int ret = plat_get_exe_dir(dst, len);
 	if (ret < 0)
-		ret = 0;
+		return ret;
 
 	memcpy(dst + ret, "skin/", sizeof "skin/");
 	return ret + sizeof("skin/") - 1;
@@ -86,7 +86,7 @@ int plat_get_skin_dir(char *dst, int len)
 #endif
 int plat_get_root_dir(char *dst, int len)
 {
-#if !defined(NO_HOME_DIR) && !defined(__GP2X__) && !defined(PANDORA)
+#if !defined(__GP2X__) && !defined(PANDORA)
 	const char *home = getenv("HOME");
 	int ret;
 
@@ -192,10 +192,6 @@ void *plat_mmap(unsigned long addr, size_t size, int need_exec, int is_fixed)
 	*/
 	if (size >= HUGETLB_THRESHOLD)
 		flags |= MAP_HUGETLB;
-#ifdef MAP_JIT
-	if (need_exec)
-		flags |= MAP_JIT;
-#endif
 
 	ret = mmap(req, size, prot, flags, -1, 0);
 	if (ret == MAP_FAILED && (flags & MAP_HUGETLB)) {
@@ -227,11 +223,8 @@ void *plat_mremap(void *ptr, size_t oldsize, size_t newsize)
 {
 	void *ret;
 
-#ifdef MREMAP_MAYMOVE
 	ret = mremap(ptr, oldsize, newsize, MREMAP_MAYMOVE);
-	if (ret == MAP_FAILED)
-#endif
-	{
+	if (ret == MAP_FAILED) {
 		fprintf(stderr, "mremap %p %zd %zd: ",
 			ptr, oldsize, newsize);
 		perror(NULL);

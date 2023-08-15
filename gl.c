@@ -10,14 +10,9 @@ static EGLDisplay edpy;
 static EGLSurface esfc;
 static EGLContext ectxt;
 
-static GLuint texture_name;
-
 /* for external flips */
 void *gl_es_display;
 void *gl_es_surface;
-
-static int tex_w, tex_h;
-static void *tex_mem;
 
 static int gl_have_error(const char *name)
 {
@@ -39,9 +34,11 @@ static int gles_have_error(const char *name)
 	return 0;
 }
 
-int gl_init(void *display, void *window, int *quirks, int w, int h)
+int gl_init(void *display, void *window, int *quirks)
 {
 	EGLConfig ecfg = NULL;
+	GLuint texture_name = 0;
+	void *tmp_texture_mem = NULL;
 	EGLint num_config;
 	int retval = -1;
 	int ret;
@@ -56,10 +53,8 @@ int gl_init(void *display, void *window, int *quirks, int w, int h)
 		goto out;
 	}
 
-	for (tex_w = 1; tex_w < w; tex_w *= 2);
-	for (tex_h = 1; tex_h < h; tex_h *= 2);
-	tex_mem = realloc(tex_mem, tex_w * tex_h * 2);
-	if (tex_mem == NULL) {
+	tmp_texture_mem = calloc(1, 1024 * 512 * 2);
+	if (tmp_texture_mem == NULL) {
 		fprintf(stderr, "OOM\n");
 		goto out;
 	}
@@ -104,15 +99,12 @@ int gl_init(void *display, void *window, int *quirks, int w, int h)
 
 	glEnable(GL_TEXTURE_2D);
 
-	if (texture_name)
-		glDeleteTextures(1, &texture_name);
-
 	glGenTextures(1, &texture_name);
 
 	glBindTexture(GL_TEXTURE_2D, texture_name);
 
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, tex_w, tex_h, 0, GL_RGB,
-		GL_UNSIGNED_SHORT_5_6_5, tex_mem);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1024, 512, 0, GL_RGB,
+		GL_UNSIGNED_SHORT_5_6_5, tmp_texture_mem);
 	if (gl_have_error("glTexImage2D"))
 		goto out;
 
@@ -135,12 +127,8 @@ int gl_init(void *display, void *window, int *quirks, int w, int h)
 	gl_es_surface = (void *)esfc;
 	retval = 0;
 out:
+	free(tmp_texture_mem);
 	return retval;
-}
-
-void gl_announce(void)
-{
-	printf("GL_RENDERER: %s\n", (char *)glGetString(GL_RENDERER));
 }
 
 static float vertices[] = {
@@ -163,8 +151,8 @@ int gl_flip(const void *fb, int w, int h)
 
 	if (fb != NULL) {
 		if (w != old_w || h != old_h) {
-			float f_w = (float)w / tex_w;
-			float f_h = (float)h / tex_h;
+			float f_w = (float)w / 1024.0f;
+			float f_h = (float)h / 512.0f;
 			texture[1*2 + 0] = f_w;
 			texture[2*2 + 1] = f_h;
 			texture[3*2 + 0] = f_w;
@@ -205,9 +193,6 @@ void gl_finish(void)
 
 	gl_es_display = (void *)edpy;
 	gl_es_surface = (void *)esfc;
-
-	if (tex_mem) free(tex_mem);
-	tex_mem = NULL;
 
 	gl_platform_finish();
 }

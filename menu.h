@@ -11,6 +11,8 @@
 #ifndef LIBPICOFE_MENU_H
 #define LIBPICOFE_MENU_H
 
+#include <SDL/SDL.h>
+
 typedef enum
 {
 	MB_NONE = 1,		/* no auto processing */
@@ -24,7 +26,7 @@ typedef enum
 
 typedef struct
 {
-	const char *name;
+	char *name;
 	menu_behavior beh;
 	int id;
 	void *var;		/* for on-off/range settings */
@@ -112,7 +114,7 @@ typedef struct
 extern me_bind_action me_ctrl_actions[];
 extern me_bind_action emuctrl_actions[];	// platform code
 
-extern void *g_menuscreen_ptr;
+extern SDL_Surface *g_menuscreen_surface;
 extern void *g_menubg_ptr;
 extern void *g_menubg_src_ptr;
 
@@ -127,7 +129,7 @@ extern int g_autostateld_opt;
 
 void menu_init_base(void);
 void menu_update_msg(const char *msg);
-void text_out16(int x, int y, const char *texto, ...);
+int text_out16(int x, int y, const char *texto, ...);
 
 menu_entry *me_list_get_first(void);
 menu_entry *me_list_get_next(void);
