@@ -25,6 +25,7 @@
 #include "input.h"
 #include "plat.h"
 #include "posix.h"
+#include "core.h"
 
 #if defined(__GNUC__) && __GNUC__ >= 7
 #pragma GCC diagnostic ignored "-Wformat-truncation"
@@ -65,9 +66,9 @@ static const int me_mfont_w = 16, me_mfont_h = 20;
 static const int me_sfont_w = 12, me_sfont_h = 16;
 #else
 static const int me_mfont_size = 12;
-static const int me_sfont_size = 12;
+static const int me_sfont_size = 10;
 static const int me_mfont_w = 12, me_mfont_h = 14;
-static const int me_sfont_w = 12, me_sfont_h = 14;
+static const int me_sfont_w = 10, me_sfont_h = 12;
 #endif
 
 static int g_menu_filter_off;
@@ -81,7 +82,7 @@ void menuscreen_memset_lines(unsigned short *dst, int c, int l)
 }
 
 // draws text to current bbp16 screen
-static int text_out16_(int x, int y, const char *text, int color)
+static int text_out16_(int x, int y, unsigned short color, const char *text)
 {
 	if (!text || x < 0 || x >= g_menuscreen_w ||
 		y < 0 || y >= g_menuscreen_h)
@@ -111,27 +112,27 @@ static int text_out16_(int x, int y, const char *text, int color)
 	return text_w;
 }
 
-int text_out16(int x, int y, const char *texto, ...)
+int text_out16(int x, int y, unsigned short color, const char *textf, ...)
 {
 	va_list args;
-	char buffer[256];
+	char buffer[512];
 
-	va_start(args, texto);
-	vsnprintf(buffer, sizeof(buffer), texto, args);
+	va_start(args, textf);
+	vsnprintf(buffer, sizeof(buffer), textf, args);
 	va_end(args);
 
-	return text_out16_(x, y, buffer, menu_text_color);
+	return text_out16_(x, y, color, buffer);
 }
 
-static int smalltext_out16(int x, int y, const char *texto, int color)
+static int smalltext_out16_(int x, int y, unsigned short color, const char *text)
 {
-	if (!texto || x < 0 || x >= g_menuscreen_w ||
+	if (!text || x < 0 || x >= g_menuscreen_w ||
 		y < 0 || y >= g_menuscreen_h)
 		return 0;
 
 	int text_w = 0;
 	SDL_Color text_color = {(color & 0xf800) >> 8, (color & 0x07e0) >> 3, (color & 0x001f) << 3};
-	SDL_Surface *text_surface = TTF_RenderUTF8_Blended(me_sfont, texto, text_color);
+	SDL_Surface *text_surface = TTF_RenderUTF8_Blended(me_sfont, text, text_color);
 	if (text_surface)
 	{
 		text_w = text_surface->w;
@@ -142,9 +143,22 @@ static int smalltext_out16(int x, int y, const char *texto, int color)
 	return text_w;
 }
 
+static int smalltext_out16(int x, int y, unsigned short color, const char *textf, ...)
+{
+	va_list args;
+	char buffer[512];
+
+	va_start(args, textf);
+	vsnprintf(buffer, sizeof(buffer), textf, args);
+	va_end(args);
+
+	return smalltext_out16_(x, y, color, buffer);
+}
+
 static int menu_draw_selection(int x, int y)
 {
-	return text_out16_(x, y, ">", (menu_sel_color < 0) ? menu_text_color : menu_sel_color);
+	return text_out16_(x, y, (menu_sel_color < 0) ? menu_text_color : menu_sel_color, ">");
+
 }
 
 static int parse_hex_color(char *buff)
@@ -403,10 +417,9 @@ static void me_toggle_onoff(menu_entry *ent)
 static void me_draw(const char *title, menu_entry *entries, int sel, void (*draw_more)(void))
 {
 	menu_entry *ent;
-	int offs;
 	const char **names;
 	const char *name;
-	menu_entry **enable_entries;
+	menu_entry **enable_entries = NULL;
 	int n_enable_entries;
 	int n_entries;
 	int m_sel;
@@ -414,8 +427,8 @@ static void me_draw(const char *title, menu_entry *entries, int sel, void (*draw
 	int wt;
 	int title_x, title_y;
 	int msg_x, msg_sy;
-	int listview_h, max_listview_h;
-	int min_listview_sy;
+	int sel_x, sel_y;
+	int listview_h;
 	int listview_x, listview_x2, listview_sy, listview_dy;
 	int n_draw_items, half_draw_items, top_idx;
 	int item_left_w = 0;
@@ -426,10 +439,10 @@ static void me_draw(const char *title, menu_entry *entries, int sel, void (*draw
 	n_entries = me_count(entries);
 	enable_entries = calloc(n_entries, sizeof(menu_entry *));
 	if (!enable_entries)
-		return;
+		goto finish;
 	n_enable_entries = 0;
 
-	// 获取enabled entries数据
+	// 获取enabled entries
 	for (i = 0; i < n_entries; i++)
 	{
 		ent = entries + i;
@@ -447,31 +460,27 @@ static void me_draw(const char *title, menu_entry *entries, int sel, void (*draw
 	TTF_SizeUTF8(me_mfont, title, &wt, NULL);
 	title_x = (g_menuscreen_w - wt) / 2;
 	title_y = 5;
-	text_out16(title_x, title_y, title);
+	text_out16(title_x, title_y, menu_sel_color, title);
 
 	// 留3行显示help
+	msg_x = 5;
 	msg_sy = g_menuscreen_h - me_sfont_h * 3;
 
 	// 获取列表最小起始y位置,与title隔一行
-	min_listview_sy = title_y + 2 * me_mfont_h;
-	// 获取最大绘画列表高度,底部留一行
-	max_listview_h = msg_sy - min_listview_sy;
-	// 获取实际绘画列表高度
-	listview_h = n_entries * me_mfont_h;
-	if (listview_h > max_listview_h)
-		listview_h = max_listview_h;
+	listview_sy = title_y + 2 * me_mfont_h;
+	// 获取绘画列表高度
+	listview_h = msg_sy - listview_sy;
 	// 获取列表绘画行数
 	n_draw_items = listview_h / me_mfont_h;
 	half_draw_items = n_draw_items / 2;
+	// 获取列表终止dy位置
+	listview_dy = listview_sy + n_draw_items * me_mfont_h;
 	// 获取第一个绘画item index
 	top_idx = m_sel - half_draw_items;
 	if (top_idx > n_enable_entries - n_draw_items)
 		top_idx = n_enable_entries - n_draw_items;
 	if (top_idx < 0)
 		top_idx = 0;
-
-	listview_sy = min_listview_sy + (max_listview_h - listview_h) / 2;
-	listview_dy = listview_sy + n_draw_items * me_mfont_h;
 
 	for (i = 0; i < n_enable_entries; i++)
 	{
@@ -481,18 +490,19 @@ static void me_draw(const char *title, menu_entry *entries, int sel, void (*draw
 		if (strlen(name) == 0)
 		{
 			if (ent->generate_name)
-				name = ent->generate_name(ent->id, &offs);
+				name = ent->generate_name(ent->id);
 		}
 		if (name != NULL)
 			TTF_SizeUTF8(me_mfont, ent->name, &wt, NULL);
 
 		if (item_left_w < wt)
+
 			item_left_w = wt;
 	}
 
-	listview_x = 5;
-	listview_x += menu_draw_selection(listview_x, listview_sy + (m_sel - top_idx) * me_mfont_h);
-	listview_x += 5;
+	sel_x = 5;
+	sel_y = listview_sy + (m_sel - top_idx) * me_mfont_h;
+	listview_x = sel_x + menu_draw_selection(sel_x, sel_y) + 5;
 	listview_x2 = listview_x + item_left_w + me_mfont_w * 2;
 
 	y = listview_sy;
@@ -507,30 +517,29 @@ static void me_draw(const char *title, menu_entry *entries, int sel, void (*draw
 		if (strlen(name) == 0)
 		{
 			if (ent->generate_name)
-				name = ent->generate_name(ent->id, &offs);
+				name = ent->generate_name(ent->id);
 		}
 		if (name != NULL)
-			text_out16(listview_x, y, name);
+			text_out16(listview_x, y, menu_sel_color, name);
 
 		switch (ent->beh)
 		{
 		case MB_NONE:
 			break;
 		case MB_OPT_ONOFF:
-			text_out16(listview_x2, y, me_read_onoff(ent) ? "開啟" : "關閉");
+			text_out16(listview_x2, y, menu_sel_color, me_read_onoff(ent) ? "开启" : "关闭");
 			break;
 		case MB_OPT_RANGE:
-			text_out16(listview_x2, y, "%i", *(int *)ent->var);
+			text_out16(listview_x2, y, menu_sel_color, "%i", *(int *)ent->var);
 			break;
 		case MB_OPT_CUSTOM:
 		case MB_OPT_CUSTONOFF:
 		case MB_OPT_CUSTRANGE:
 			name = NULL;
-			offs = 0;
 			if (ent->generate_name)
-				name = ent->generate_name(ent->id, &offs);
+				name = ent->generate_name(ent->id);
 			if (name != NULL)
-				text_out16(listview_x2, y, "%s", name);
+				text_out16(listview_x2, y, menu_sel_color, "%s", name);
 			break;
 		case MB_OPT_ENUM:
 			names = (const char **)ent->data;
@@ -538,7 +547,7 @@ static void me_draw(const char *title, menu_entry *entries, int sel, void (*draw
 			{
 				if (j == *(unsigned char *)ent->var)
 				{
-					text_out16(listview_x2, y, "%s", names[j]);
+					text_out16(listview_x2, y, menu_sel_color, "%s", names[j]);
 					break;
 				}
 			}
@@ -551,11 +560,10 @@ static void me_draw(const char *title, menu_entry *entries, int sel, void (*draw
 	menu_separation();
 
 	ent = enable_entries[m_sel];
-	msg_x = 5;
 
 	if (menu_error_msg[0] != 0)
 	{
-		text_out16(msg_x, msg_sy, menu_error_msg);
+		smalltext_out16(msg_x, msg_sy, menu_sel_color, menu_error_msg);
 
 		if (plat_get_ticks_ms() - menu_error_time > 2048)
 			menu_error_msg[0] = 0;
@@ -582,7 +590,7 @@ static void me_draw(const char *title, menu_entry *entries, int sel, void (*draw
 				p2 = strchr(p, '\n');
 				if (p2)
 					*p2++ = '\0';
-				smalltext_out16(msg_x, y, p, 0xffff);
+				smalltext_out16(msg_x, y, 0xffff, p);
 				p = p2;
 				y += me_sfont_h;
 			}
@@ -594,9 +602,11 @@ static void me_draw(const char *title, menu_entry *entries, int sel, void (*draw
 		}
 	}
 
-	free(enable_entries);
-
 	menu_separation();
+
+finish:
+	if (enable_entries)
+		free(enable_entries);
 
 	if (draw_more != NULL)
 		draw_more();
@@ -728,41 +738,76 @@ static int me_loop(const char *title, menu_entry *menu, int *menu_sel)
 static void draw_menu_message(const char *msg, void (*draw_more)(void))
 {
 	int x, y, h, w, wt;
-	const char *p;
+	char *buf = NULL;
+	char *p, *p2;
+	int len, lines, i;
 
-	p = msg;
-	for (h = 1, w = 0; *p != 0; h++)
+	menu_draw_begin(1, 0);
+
+	len = strlen(msg);
+	buf = malloc(len + 1);
+	if (!buf)
+		goto finish;
+	strcpy(buf, msg);
+
+	p = buf;
+	lines = 1;
+	w = 0;
+
+	for (i = 0; i < len; i++)
 	{
-		for (wt = 0; *p != 0 && *p != '\n'; p++)
-			wt++;
-
-		if (wt > w)
-			w = wt;
-		if (*p == 0)
-			break;
-		p++;
+		if (buf[i] == '\n')
+		{
+			wt = 0;
+			buf[i] = '\0';
+			TTF_SizeUTF8(me_mfont, p, &wt, NULL);
+			buf[i] = '\n';
+			if (w < wt)
+				w = wt;
+			p = buf + i + 1;
+			lines++;
+		}
 	}
 
-	x = g_menuscreen_w / 2 - w * me_mfont_w / 2;
-	y = g_menuscreen_h / 2 - h * me_mfont_h / 2;
+	h = me_sfont_h * lines;
+	x = (g_menuscreen_w - w) / 2;
+	y = (g_menuscreen_h - h) / 2;
 	if (x < 0)
 		x = 0;
 	if (y < 0)
 		y = 0;
 
-	menu_draw_begin(1, 0);
-
-	for (p = msg; *p != 0 && y <= g_menuscreen_h - me_mfont_h; y += me_mfont_h)
+	for (i = 0; i < len; i++)
 	{
-		text_out16(x, y, p);
+		if (buf[i] == '\n')
+		{
+			wt = 0;
+			buf[i] = '\0';
+			TTF_SizeUTF8(me_mfont, p, &wt, NULL);
+			buf[i] = '\n';
+			if (w < wt)
+				w = wt;
+			p = buf + i + 1;
+			lines++;
+		}
+	}
 
-		for (; *p != 0 && *p != '\n'; p++)
-			;
-		if (*p != 0)
-			p++;
+	p = buf;
+	for (i = 0; i < lines; i++)
+	{
+		p2 = strchr(p, '\n');
+		if (p2)
+			*p2++ = '\0';
+		smalltext_out16(x, y, 0xffff, p);
+		p = p2;
+		y += me_sfont_h;
 	}
 
 	menu_separation();
+
+finish:
+	if (buf)
+		free(buf);
 
 	if (draw_more != NULL)
 		draw_more();
@@ -785,9 +830,9 @@ static void do_delete(const char *fpath, const char *fname)
 		len = g_menuscreen_w / me_sfont_w;
 
 	mid = g_menuscreen_w / 2;
-	text_out16(mid - me_mfont_w * 15 / 2, 8 * me_mfont_h, "About to delete");
-	smalltext_out16(mid - len * me_sfont_w / 2, 9 * me_mfont_h + 5, fname, 0xbdff);
-	text_out16(mid - me_mfont_w * 13 / 2, 11 * me_mfont_h, "Are you sure?");
+	text_out16(mid - me_mfont_w * 15 / 2, 8 * me_mfont_h, menu_sel_color, "About to delete");
+	smalltext_out16(mid - len * me_sfont_w / 2, 9 * me_mfont_h + 5, 0xbdff, fname);
+	text_out16(mid - me_mfont_w * 13 / 2, 11 * me_mfont_h, menu_sel_color, "Are you sure?");
 
 	nm = in_get_key_name(-1, -PBTN_MA3);
 	snprintf(tmp, sizeof(tmp), "(%s - confirm, ", nm);
@@ -796,7 +841,7 @@ static void do_delete(const char *fpath, const char *fname)
 	snprintf(tmp + len, sizeof(tmp) - len, "%s - cancel)", nm);
 	len = strlen(tmp);
 
-	text_out16(mid - me_mfont_w * len / 2, 12 * me_mfont_h, tmp);
+	text_out16(mid - me_mfont_w * len / 2, 12 * me_mfont_h, menu_sel_color, tmp);
 	menu_draw_end();
 
 	while (in_menu_wait_any(NULL, 50) & (PBTN_MENU | PBTN_MA2))
@@ -809,66 +854,102 @@ static void do_delete(const char *fpath, const char *fname)
 // -------------- ROM selector --------------
 
 static void draw_dirlist(char *curdir, struct dirent **namelist,
-						 int n, int sel, int show_help)
+						 int list_len, int sel, int show_help)
 {
-	int max_cnt, start, i, x, pos;
+	int wt;
+	char *pcurdir;
+	char curdir_buf[256];
+	int curdir_x, curdir_y;
+	int msg_x, msg_sy;
+	int sel_x, sel_y;
+	int listview_h;
+	int listview_x, listview_sy, listview_dy;
+	int n_draw_items, half_draw_items, top_idx;
+
 	void *darken_ptr;
-	char buff[64];
+	int i, x, y;
 
-	max_cnt = g_menuscreen_h / me_sfont_h;
-	start = max_cnt / 2 - sel;
+	menu_draw_begin(1, 0);
 
-	menu_draw_begin(1, 1);
-
-	//	if (!rom_loaded)
-	//		menu_darken_bg(gp2x_screen, 320*240, 0);
-
-	darken_ptr = (short *)g_menuscreen_surface->pixels + g_menuscreen_pp * max_cnt / 2 * me_sfont_h;
-	SDL_LockSurface(g_menuscreen_surface);
-	menu_darken_bg(darken_ptr, darken_ptr, g_menuscreen_pp * me_sfont_h * 8 / 10, 0);
-	SDL_UnlockSurface(g_menuscreen_surface);
-
-	x = 5 + me_mfont_w + 1;
-	if (start - 2 >= 0)
-		smalltext_out16(14, (start - 2) * me_sfont_h, curdir, 0xffff);
-	for (i = 0; i < n; i++)
+	curdir_x = 5;
+	curdir_y = 5;
+	if (curdir)
 	{
-		pos = start + i;
-		if (pos < 0)
-			continue;
-		if (pos >= max_cnt)
+		pcurdir = curdir;
+		TTF_SizeUTF8(me_mfont, curdir, &wt, NULL);
+		// 过长截断
+		if (wt > g_menuscreen_w - 10)
+		{
+			char *p = strrchr(curdir, '/');
+			if (p)
+			{
+				snprintf(curdir_buf, sizeof(curdir_buf), "...%s", p);
+				pcurdir = curdir_buf;
+			}
+		}
+		text_out16(curdir_x, curdir_y, 0xffff, pcurdir);
+	}
+
+	// help
+	msg_sy = g_menuscreen_h;
+	if (show_help)
+		msg_sy -= me_sfont_h * 3;
+
+	// 获取列表起始y位置,与title隔一行
+	listview_sy = curdir_y + 2 * me_mfont_h;
+	// 获取绘画列表高度
+	listview_h = msg_sy - listview_sy;
+	// 获取列表绘画行数
+	n_draw_items = listview_h / me_mfont_h;
+	half_draw_items = n_draw_items / 2;
+	// 获取列表终止dy位置
+	listview_dy = listview_sy + n_draw_items * me_mfont_h;
+	// 获取第一个绘画item index
+	top_idx = sel - half_draw_items;
+	if (top_idx > list_len - n_draw_items)
+		top_idx = list_len - n_draw_items;
+	if (top_idx < 0)
+		top_idx = 0;
+
+	sel_x = 5;
+	sel_y = listview_sy + (sel - top_idx) * me_mfont_h;
+	darken_ptr = (short *)g_menuscreen_surface->pixels + g_menuscreen_pp * (sel_y - 2);
+	SDL_LockSurface(g_menuscreen_surface);
+	menu_darken_bg(darken_ptr, darken_ptr, g_menuscreen_pp * (me_mfont_h + 4), 1);
+	SDL_UnlockSurface(g_menuscreen_surface);
+	listview_x = sel_x + menu_draw_selection(sel_x, sel_y) + 5;
+
+	y = listview_sy;
+	for (i = top_idx; i < list_len; i++)
+	{
+		if (y >= listview_dy)
 			break;
+
 		if (namelist[i]->d_type == DT_DIR)
 		{
-			smalltext_out16(x, pos * me_sfont_h, "/", 0xfff6);
-			smalltext_out16(x + me_sfont_w, pos * me_sfont_h, namelist[i]->d_name, 0xfff6);
+			x = listview_x;
+			x += text_out16(x, y, 0xffff, namelist[i]->d_name);
+			if (strcmp(namelist[i]->d_name, "..") != 0)
+				text_out16(x, y, 0xffff, "/");
 		}
 		else
 		{
-			unsigned short color = fname2color(namelist[i]->d_name);
-			smalltext_out16(x, pos * me_sfont_h, namelist[i]->d_name, color);
+			text_out16(listview_x, y, 0xfff6, namelist[i]->d_name);
 		}
+		y += me_mfont_h;
 	}
-	smalltext_out16(5, max_cnt / 2 * me_sfont_h, ">", 0xffff);
 
 	if (show_help)
 	{
-		darken_ptr = (short *)g_menuscreen_surface->pixels + g_menuscreen_pp * (g_menuscreen_h - me_sfont_h * 5 / 2);
-		SDL_LockSurface(g_menuscreen_surface);
-		menu_darken_bg(darken_ptr, darken_ptr, g_menuscreen_pp * (me_sfont_h * 5 / 2), 1);
-		SDL_UnlockSurface(g_menuscreen_surface);
-
-		snprintf(buff, sizeof(buff), "%s - select, %s - back",
-				 in_get_key_name(-1, -PBTN_MOK), in_get_key_name(-1, -PBTN_MBACK));
-		smalltext_out16(x, g_menuscreen_h - me_sfont_h * 3 - 2, buff, 0xe78c);
-
-		snprintf(buff, sizeof(buff), g_menu_filter_off ? "%s - hide unknown files" : "%s - show all files",
-				 in_get_key_name(-1, -PBTN_MA3));
-		smalltext_out16(x, g_menuscreen_h - me_sfont_h * 2 - 2, buff, 0xe78c);
-
-		snprintf(buff, sizeof(buff), g_autostateld_opt ? "%s - autoload save is ON" : "%s - autoload save is OFF",
-				 in_get_key_name(-1, -PBTN_MA2));
-		smalltext_out16(x, g_menuscreen_h - me_sfont_h * 1 - 2, buff, 0xe78c);
+		y = msg_sy;
+		smalltext_out16(msg_x, y, 0xe78c, "%s - 選擇, %s - 返回",
+						in_get_key_name(-1, -PBTN_MOK), in_get_key_name(-1, -PBTN_MBACK));
+		y += me_sfont_h;
+		smalltext_out16(msg_x, y, 0xe78c, g_menu_filter_off ? "%s - 隱藏未知文件" : "%s - 顯示全部文件",
+						in_get_key_name(-1, -PBTN_MA3));
+		y += me_sfont_h;
+		smalltext_out16(msg_x, y, 0xe78c, g_autostateld_opt ? "%s - 已開啟自動加載存檔" : "%s - 已關閉自動加載存檔",
+						in_get_key_name(-1, -PBTN_MA2));
 	}
 
 	menu_draw_end();
@@ -946,13 +1027,45 @@ static int dirent_seek_char(struct dirent **namelist, int len, int sel, char c)
 	return i - 1;
 }
 
+static int menu_make_file_name(char *name, char *path, int size)
+{
+	if (!name || !path)
+		return -1;
+
+	int len = strlen(path);
+	if (len <= 0)
+		goto failed;
+
+	if (len == 1 && strcmp(path, "/") == 0)
+		goto failed;
+
+	char *p2 = path + len - 1;
+	while (*p2 == '/' && p2 > path)
+		p2--;
+
+	char *p = p2;
+	while (*p != '/' && p > path)
+		p--;
+
+	len = p2 - p;
+	if (size <= len)
+		goto failed;
+	strncpy(name, p + 1, len);
+	name[len] = '\0';
+	return 0;
+
+failed:
+	name[0] = '\0';
+	return -1;
+}
+
 static const char *menu_loop_romsel(char *curr_path, int len,
 									const char **filter_exts,
 									int (*extra_filter)(struct dirent **namelist, int count,
 														const char *basedir))
 {
 	static char rom_fname_reload[256]; // used for scratch and return
-	char sel_fname[256];
+	static char sel_fname[256] = {0};
 	int (*filter)(const struct dirent *);
 	struct dirent **namelist = NULL;
 	int n = 0, inp = 0, sel = 0, show_help = 0;
@@ -962,7 +1075,6 @@ static const char *menu_loop_romsel(char *curr_path, int len,
 	int r, i;
 
 	filter_exts_internal = filter_exts;
-	sel_fname[0] = 0;
 
 	// is this a dir or a full path?
 	if (!plat_is_dir(curr_path))
@@ -1113,6 +1225,7 @@ rescan:
 				char *slash = l && curr_path[l - 1] == '/' ? "" : "/";
 				snprintf(rom_fname_reload, sizeof(rom_fname_reload),
 						 "%s%s%s", curr_path, slash, namelist[sel]->d_name);
+
 				if (inp & PBTN_MOK)
 				{ // return sel
 					ret = rom_fname_reload;
@@ -1133,6 +1246,8 @@ rescan:
 					break;
 				if (strcmp(namelist[sel]->d_name, "..") == 0)
 				{
+					menu_make_file_name(sel_fname, curr_path, sizeof(sel_fname));
+
 					char *start = curr_path;
 					p = start + strlen(start) - 1;
 					while (*p == '/' && p > start)
@@ -1142,10 +1257,7 @@ rescan:
 					if (p <= start)
 						plat_get_data_dir(newdir, newlen);
 					else
-					{
 						strncpy(newdir, start, p - start);
-						newdir[p - start] = 0;
-					}
 				}
 				else
 				{
@@ -1155,6 +1267,7 @@ rescan:
 						*p-- = 0;
 					strcat(newdir, "/");
 					strcat(newdir, namelist[sel]->d_name);
+					sel_fname[0] = '\0';
 				}
 				ret = menu_loop_romsel(newdir, newlen, filter_exts, extra_filter);
 				free(newdir);
@@ -1173,7 +1286,10 @@ rescan:
 		}
 
 		if (inp & PBTN_MBACK)
+		{
+			sel_fname[0] = '\0';
 			break;
+		}
 
 		if (show_help > 0)
 			show_help--;
@@ -1220,8 +1336,8 @@ static void draw_savestate_menu(int menu_sel, int is_loading)
 {
 	int wt;
 	int title_x, title_y;
-	int listview_h, max_listview_h;
-	int min_listview_sy;
+	int sel_x, sel_y;
+	int listview_h;
 	int listview_x, listview_sy, listview_dy;
 	int n_draw_items, half_draw_items, top_idx;
 	char *title;
@@ -1237,19 +1353,17 @@ static void draw_savestate_menu(int menu_sel, int is_loading)
 	TTF_SizeUTF8(me_mfont, title, &wt, NULL);
 	title_x = (g_menuscreen_w - wt) / 2;
 	title_y = 5;
-	text_out16(title_x, title_y, title);
+	text_out16(title_x, title_y, menu_sel_color, title);
 
-	// 获取列表最小起始y位置,与title隔一行
-	min_listview_sy = title_y + 2 * me_mfont_h;
-	// 获取最大绘画列表高度,底部留一行
-	max_listview_h = g_menuscreen_h - min_listview_sy - me_mfont_h;
-	// 获取实际绘画列表高度
-	listview_h = STATE_SLOT_COUNT * me_mfont_h;
-	if (listview_h > max_listview_h)
-		listview_h = max_listview_h;
+	// 获取列表起始y位置,与title隔一行
+	listview_sy = title_y + 2 * me_mfont_h;
+	// 获取绘画列表高度,底部留一行
+	listview_h = g_menuscreen_h - me_mfont_h - listview_sy;
 	// 获取列表绘画行数
 	n_draw_items = listview_h / me_mfont_h;
 	half_draw_items = n_draw_items / 2;
+	// 获取列表终止dy位置
+	listview_dy = listview_sy + n_draw_items * me_mfont_h;
 	// 获取第一个绘画item index
 	top_idx = menu_sel - half_draw_items;
 	if (top_idx > STATE_SLOT_COUNT - n_draw_items)
@@ -1257,12 +1371,9 @@ static void draw_savestate_menu(int menu_sel, int is_loading)
 	if (top_idx < 0)
 		top_idx = 0;
 
-	listview_sy = min_listview_sy + (max_listview_h - listview_h) / 2;
-	listview_dy = listview_sy + n_draw_items * me_mfont_h;
-
-	listview_x = 5;
-	listview_x += menu_draw_selection(listview_x, listview_sy + (menu_sel - top_idx) * me_mfont_h);
-	listview_x += 5;
+	sel_x = 5;
+	sel_y = listview_sy + (menu_sel - top_idx) * me_mfont_h;
+	listview_x = sel_x + menu_draw_selection(sel_x, sel_y) + 5;
 
 	int i, y = listview_sy;
 	for (i = top_idx; i < STATE_SLOT_COUNT; i++)
@@ -1285,7 +1396,7 @@ static void draw_savestate_menu(int menu_sel, int is_loading)
 			}
 		}
 
-		text_out16(listview_x, y, text_buf);
+		text_out16(listview_x, y, menu_sel_color, text_buf);
 		y += me_mfont_h;
 	}
 
@@ -1424,8 +1535,8 @@ static void draw_key_config(const me_bind_action *opts, int opt_cnt, int player_
 	int wt;
 	int title_x, title_y;
 	int msg_x, msg_sy;
-	int listview_h, max_listview_h;
-	int min_listview_sy;
+	int sel_x, sel_y;
+	int listview_h;
 	int listview_x, listview_x2, listview_sy, listview_dy;
 	int n_draw_items, half_draw_items, top_idx;
 	int item_left_w = 0;
@@ -1444,32 +1555,28 @@ static void draw_key_config(const me_bind_action *opts, int opt_cnt, int player_
 	TTF_SizeUTF8(me_mfont, text_buf, &wt, NULL);
 	title_x = (g_menuscreen_w - wt) / 2;
 	title_y = 5;
-	text_out16(title_x, title_y, text_buf);
+	text_out16(title_x, title_y, menu_sel_color, text_buf);
 
+	// help
 	msg_sy = g_menuscreen_h - me_sfont_h;
 	if (dev_count > 1)
 		msg_sy -= me_sfont_h * 2;
 
-	// 获取列表最小起始y位置,与title隔一行
-	min_listview_sy = title_y + 2 * me_mfont_h;
-	// 获取最大绘画列表高度,底部留一行
-	max_listview_h = msg_sy - min_listview_sy;
-	// 获取实际绘画列表高度
-	listview_h = opt_cnt * me_mfont_h;
-	if (listview_h > max_listview_h)
-		listview_h = max_listview_h;
+	// 获取列表起始y位置,与title隔一行
+	listview_sy = title_y + 2 * me_mfont_h;
+	// 获取绘画列表高度
+	listview_h = msg_sy - listview_sy;
 	// 获取列表绘画行数
 	n_draw_items = listview_h / me_mfont_h;
 	half_draw_items = n_draw_items / 2;
+	// 获取列表终止dy位置
+	listview_dy = listview_sy + n_draw_items * me_mfont_h;
 	// 获取第一个绘画item index
 	top_idx = sel - half_draw_items;
 	if (top_idx > opt_cnt - n_draw_items)
 		top_idx = opt_cnt - n_draw_items;
 	if (top_idx < 0)
 		top_idx = 0;
-
-	listview_sy = min_listview_sy + (max_listview_h - listview_h) / 2;
-	listview_dy = listview_sy + n_draw_items * me_mfont_h;
 
 	for (i = 0; i < opt_cnt; i++)
 	{
@@ -1479,23 +1586,24 @@ static void draw_key_config(const me_bind_action *opts, int opt_cnt, int player_
 			item_left_w = wt;
 	}
 
-	listview_x = 5;
-	listview_x += menu_draw_selection(listview_x, listview_sy + (sel - top_idx) * me_mfont_h);
-	listview_x += 5;
+	sel_x = 5;
+	sel_y = listview_sy + (sel - top_idx) * me_mfont_h;
+	listview_x = sel_x + menu_draw_selection(sel_x, sel_y) + 5;
 	listview_x2 = listview_x + item_left_w + me_mfont_w * 2;
 
 	y = listview_sy;
+
 	for (i = top_idx; i < opt_cnt; i++)
 	{
 		if (y >= listview_dy)
 			break;
 
-		text_out16(listview_x, y, opts[i].name);
+		text_out16(listview_x, y, menu_sel_color, opts[i].name);
 		val = action_binds(player_idx, opts[i].mask, dev_id);
 		if (strlen(val) > 0)
-			text_out16(listview_x2, y, val);
+			text_out16(listview_x2, y, menu_sel_color, val);
 		else
-			text_out16(listview_x2, y, "(空)");
+			text_out16(listview_x2, y, menu_sel_color, "(無)");
 		y += me_mfont_h;
 	}
 
@@ -1507,11 +1615,11 @@ static void draw_key_config(const me_bind_action *opts, int opt_cnt, int player_
 	{
 		snprintf(text_buf, sizeof(text_buf), "%s - 綁定, %s - 清除",
 				 in_get_key_name(-1, -PBTN_MOK), in_get_key_name(-1, -PBTN_MA2));
-		smalltext_out16(msg_x, y, text_buf, 0xFFFF);
+		smalltext_out16(msg_x, y, 0xffff, text_buf);
 	}
 	else
 	{
-		smalltext_out16(msg_x, y, "請輸入一个按鍵綁定/解綁", 0xFFFF);
+		smalltext_out16(msg_x, y, 0xffff, "請輸入一个按鍵綁定/解綁");
 	}
 	y += me_sfont_h;
 
@@ -1522,9 +1630,9 @@ static void draw_key_config(const me_bind_action *opts, int opt_cnt, int player_
 		else
 			dev_name = in_get_dev_name(dev_id, 0, 1);
 
-		text_out16(msg_x, y, dev_name);
+		smalltext_out16(msg_x, y, 0xffff, dev_name);
 		y += me_sfont_h;
-		text_out16(msg_x, y, "輸入左/右切換其他設備");
+		smalltext_out16(msg_x, y, 0xffff, "輸入左/右切換其他設備");
 	}
 
 	menu_draw_end();

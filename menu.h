@@ -37,7 +37,7 @@ typedef struct
 	unsigned int need_to_save:1;
 	unsigned int selectable:1;
 	int (*handler)(int id, int keys);
-	const char * (*generate_name)(int id, int *offs);
+	const char * (*generate_name)(int id);
 	const void *data;
 	const char *help;
 } menu_entry;
@@ -129,7 +129,7 @@ extern int g_autostateld_opt;
 
 void menu_init_base(void);
 void menu_update_msg(const char *msg);
-int text_out16(int x, int y, const char *texto, ...);
+int text_out16(int x, int y, unsigned short color, const char *textf, ...);
 
 menu_entry *me_list_get_first(void);
 menu_entry *me_list_get_next(void);
